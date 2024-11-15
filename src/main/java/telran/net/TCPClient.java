@@ -10,7 +10,7 @@ import telran.net.exceptions.ServerUnavailableException;
 
 import static telran.net.TCPConfigurationProperties.*;
 
-public class TCPClient implements Closeable {
+public class TCPClient implements Closeable, NetworkClient {
     Socket socket;
     PrintStream writer;
     BufferedReader reader;
@@ -62,6 +62,7 @@ public class TCPClient implements Closeable {
         }
        
     }
+    @Override
     public String sendAndReceive(String requestType, String requestData) {
         Request request = new Request(requestType, requestData);
        
