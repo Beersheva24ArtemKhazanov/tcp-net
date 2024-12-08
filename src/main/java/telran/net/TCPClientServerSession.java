@@ -35,18 +35,20 @@ public class TCPClientServerSession implements Runnable {
             socket.setSoTimeout(SOCKET_TIMEOUT);
             String request = "";
             while (!isShutDown.get()) {
-                if (reader.ready() && request != null) {
-                    request = reader.readLine();
+                try {
+                    if (reader.ready() && request != null) {
+                        request = reader.readLine();
+                        checkCLosingSocket();
+                    }
+                    String response = protocol.getResponseWithJSON(request);
+                    writer.println(response);
+                    updateActivityMetrics(response);
+                } catch (SocketTimeoutException e) {
+                    idleTime += SOCKET_TIMEOUT;
                     checkCLosingSocket();
                 }
-                String response = protocol.getResponseWithJSON(request);
-                writer.println(response);
-                updateActivityMetrics(response);
             }
             socket.close();
-        } catch (SocketTimeoutException e) {
-            idleTime += SOCKET_TIMEOUT;
-            checkCLosingSocket();
         } catch (Exception e) {
             System.out.println("Server is not working because of " + e);
         } finally {
