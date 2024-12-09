@@ -23,13 +23,13 @@ public class TCPServer implements Runnable {
         try (ServerSocket serverSocket = new ServerSocket(port)) {
             serverSocket.setSoTimeout(1000);
             System.out.println("Server is listening on the port: " + port);
-            while (!executor.isShutdown()) {
+            while (!isShutDown.get()) {
                 try {
                     Socket socket = serverSocket.accept();
                     var session = new TCPClientServerSession(protocol, socket, isShutDown);
                     executor.execute(session);
                 } catch (SocketTimeoutException e) {
-                    shutDown();
+                    
                 }
             }
         } catch (Exception e) {
