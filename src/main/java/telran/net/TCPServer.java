@@ -1,47 +1,64 @@
 package telran.net;
 
 import java.net.*;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.*;
 
 public class TCPServer implements Runnable {
+    private static final int DEFAULT_SOCKET_TIMEOUT = 10;
+    private static final int DEFAULT_IDLE_CONNECTION_TIMEOUT = 60000;
+    private static final int DEFAULT_LIMIT_REQUESTS_PER_SEC = 5;
+    private static final int DEFAULT_LIMIT_NON_OK_RESPONSES_IN_ROW = 10;
     Protocol protocol;
     int port;
-    ExecutorService executor;
-    AtomicBoolean isShutDown;
+    ExecutorService executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+    int socketTimeout;
+    int idleConnectionTimeout;
+    int limitRequestsPerSecond;
+    int limitNonOkResponsesInRow;
 
-    public TCPServer(Protocol protocol, int port) {
+    public TCPServer(Protocol protocol, int port, int socketTimeout, int idleConnectionTimeout,
+            int limitRequestsPerSecond, int limitNonOkResponsesInRow) {
         this.protocol = protocol;
         this.port = port;
-        this.executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
-        this.isShutDown = new AtomicBoolean(false);
+        this.socketTimeout = socketTimeout;
+        this.idleConnectionTimeout = idleConnectionTimeout;
+        this.limitRequestsPerSecond = limitRequestsPerSecond;
+        this.limitNonOkResponsesInRow = limitNonOkResponsesInRow;
+    }
+
+    public TCPServer(Protocol protocol, int port, int idleConnectionTimeout) {
+        this(protocol, port, DEFAULT_SOCKET_TIMEOUT, idleConnectionTimeout, DEFAULT_LIMIT_REQUESTS_PER_SEC,
+                DEFAULT_LIMIT_NON_OK_RESPONSES_IN_ROW);
+    }
+
+    public TCPServer(Protocol protocol, int port) {
+        this(protocol, port, DEFAULT_SOCKET_TIMEOUT, DEFAULT_IDLE_CONNECTION_TIMEOUT, DEFAULT_LIMIT_REQUESTS_PER_SEC,
+                DEFAULT_LIMIT_NON_OK_RESPONSES_IN_ROW);
     }
 
     @Override
     public void run() {
         try (ServerSocket serverSocket = new ServerSocket(port)) {
-            serverSocket.setSoTimeout(1000);
-            System.out.println("Server is listening on the port: " + port);
-            while (!isShutDown.get()) {
+            System.out.println("Server is listening on the port " + port);
+            serverSocket.setSoTimeout(socketTimeout);
+            while (!executor.isShutdown()) {
                 try {
                     Socket socket = serverSocket.accept();
-                    var session = new TCPClientServerSession(protocol, socket, isShutDown);
+                    socket.setSoTimeout(socketTimeout);
+                    var session = new TCPClientServerSession(protocol, socket, this);
                     executor.execute(session);
                 } catch (SocketTimeoutException e) {
-                    
+
                 }
             }
         } catch (Exception e) {
             System.out.println(e);
-        } finally {
-            shutDown();
         }
     }
 
-    public void shutDown() {
-        isShutDown.set(true);
+    public void shutdown() {
         executor.shutdownNow();
+
     }
 
 }

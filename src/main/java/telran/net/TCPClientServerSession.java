@@ -1,100 +1,70 @@
 package telran.net;
 
 import java.net.*;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.io.*;
 
 public class TCPClientServerSession implements Runnable {
-    private static final int SOCKET_TIMEOUT = 1000;
-    private static final int MAX_FAILED_RESPONSES = 5;
-    private static final int MAX_REQUESTS_PER_SECOND = 10;
-    private static final long IDLE_TIMEOUT = 60000;
-
     Protocol protocol;
     Socket socket;
-    AtomicBoolean isShutDown;
-    private long idleTime;
-    private int failedResponses;
-    private int requestsInLastSecond;
-    private long lastRequestTime;
+    TCPServer server;
+    int idleTimeout;
+    int requestsPerSecond;
+    int nonOkResponses;
+    Instant timestamp = Instant.now();
 
-    public TCPClientServerSession(Protocol protocol, Socket socket, AtomicBoolean isShutDown) {
+    public TCPClientServerSession(Protocol protocol, Socket socket, TCPServer server) {
         this.protocol = protocol;
         this.socket = socket;
-        this.isShutDown = isShutDown;
-        this.idleTime = 0;
-        this.failedResponses = 0;
-        this.requestsInLastSecond = 0;
-        this.lastRequestTime = System.currentTimeMillis();
+        this.server = server;
     }
 
     @Override
     public void run() {
+
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                 PrintStream writer = new PrintStream(socket.getOutputStream())) {
-            socket.setSoTimeout(SOCKET_TIMEOUT);
-            String request = "";
-            while (!isShutDown.get()) {
+            String request = null;
+            while (!server.executor.isShutdown() && !isIdleTimeout()) {
                 try {
-                    if (reader.ready() && request != null) {
-                        request = reader.readLine();
-                        checkCLosingSocket();
+                    request = reader.readLine();
+                    if (request == null || isRequestsPerSecond()) {
+                        break;
                     }
                     String response = protocol.getResponseWithJSON(request);
+                    if (isNonOkResponses(response)) {
+                        break;
+                    }
                     writer.println(response);
-                    updateActivityMetrics(response);
                 } catch (SocketTimeoutException e) {
-                    idleTime += SOCKET_TIMEOUT;
-                    checkCLosingSocket();
+                    idleTimeout += server.socketTimeout;
                 }
             }
             socket.close();
         } catch (Exception e) {
-            System.out.println("Server is not working because of " + e);
-        } finally {
-            try {
-                socket.close();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
+            System.out.println(e);
         }
     }
 
-    private void updateActivityMetrics(String response) {
-        idleTime = 0;
-        if (response != "OK") {
-            failedResponses++;
-            if (failedResponses > MAX_FAILED_RESPONSES) {
-                try {
-                    socket.close();
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            }
+    private boolean isRequestsPerSecond() {
+        Instant current = Instant.now();
+        if (ChronoUnit.SECONDS.between(timestamp, current) > 1) {
+            requestsPerSecond = 0;
+            timestamp = current;
         } else {
-            failedResponses = 0;
+            requestsPerSecond++;
         }
+        return requestsPerSecond > server.limitRequestsPerSecond;
     }
 
-    private void checkCLosingSocket() {
-        if (isDoSAttack() || idleTime >= IDLE_TIMEOUT) {
-            try {
-                socket.close();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        }
+    private boolean isNonOkResponses(String response) {
+        nonOkResponses = response.contains("OK") ? 0 : nonOkResponses + 1;
+        return nonOkResponses > server.limitNonOkResponsesInRow;
     }
 
-    private boolean isDoSAttack() {
-        long currentTime = System.currentTimeMillis();
-        if (currentTime - lastRequestTime > 1000) {
-            requestsInLastSecond = 1;
-            lastRequestTime = currentTime;
-        } else {
-            requestsInLastSecond++;
-        }
-        return requestsInLastSecond > MAX_REQUESTS_PER_SECOND;
+    private boolean isIdleTimeout() {
+        return idleTimeout > server.idleConnectionTimeout;
     }
 
 }
